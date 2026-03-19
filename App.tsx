@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
+  Dimensions,
   Modal,
   PanResponder,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   StatusBar,
@@ -21,6 +24,9 @@ import { clearStoredTokens, getStoredAccessToken, setAuthFailureHandler } from "
 import { getProfile, updateProfile } from "./lib/api/profile";
 import { getHealth } from "./lib/api/system";
 import type { SessionResponse, UserResponse } from "./lib/api/types";
+
+const { height: SCREEN_HEIGHT } = Dimensions.get("window");
+const SHEET_HEADER_HEIGHT = 48;
 
 type Audience = "heat" | "stroller" | "mobile";
 type RouteId = "safest" | "comfortable" | "fastest";
@@ -176,8 +182,6 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
-const SHEET_HEADER_HEIGHT = 44;
-
 function buildRoutes(start: LatLng, end: LatLng): RouteOption[] {
   const shadeAnchors = LANDMARKS.filter((place) =>
     ["Парк Панфиловцев", "Площадь Абая", "Нижний парк Кок-Тобе"].includes(place.name)
@@ -306,6 +310,7 @@ export default function App() {
   const [journeyStarted, setJourneyStarted] = useState(false);
   const [selectedRouteId, setSelectedRouteId] = useState<RouteId>(AUDIENCE_COPY.heat.recommended);
   const [sheetSnapLevel, setSheetSnapLevel] = useState<"collapsed" | "half" | "full">("half");
+  const sheetSnapLevelRef = useRef<"collapsed" | "half" | "full">("half");
   const [sheetVisibleHeight, setSheetVisibleHeight] = useState(0);
   const [routeInputDialog, setRouteInputDialog] = useState<RouteInputDialog | null>(null);
 
@@ -476,6 +481,7 @@ export default function App() {
   useEffect(() => {
     bottomPanelTranslateY.setValue(snapOffsets.half);
     sheetOffsetRef.current = snapOffsets.half;
+    sheetSnapLevelRef.current = "half";
     setSheetSnapLevel("half");
     bottomPanelScrollRef.current?.scrollTo({ y: 0, animated: false });
   }, [bottomPanelTranslateY, snapOffsets.half]);
@@ -539,6 +545,7 @@ export default function App() {
       useNativeDriver: true,
     }).start(() => {
       sheetOffsetRef.current = nextTarget;
+      sheetSnapLevelRef.current = nextSnapLevel;
       setSheetSnapLevel(nextSnapLevel);
       if (nextSnapLevel !== "full") {
         bottomPanelScrollRef.current?.scrollTo({ y: 0, animated: false });
@@ -567,13 +574,31 @@ export default function App() {
   const bottomPanelPanResponder = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: (_, gestureState) =>
-          Math.abs(gestureState.dy) > 6 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.15,
+        onStartShouldSetPanResponder: () => sheetSnapLevelRef.current !== "full",
+        onStartShouldSetPanResponderCapture: () => sheetSnapLevelRef.current !== "full",
+
+        onMoveShouldSetPanResponder: (_, gestureState) => {
+          if (sheetSnapLevelRef.current !== "full") {
+            return Math.abs(gestureState.dy) > 4;
+          }
+          const scrollIsAtTop = scrollDragLastOffsetY.current <= 0;
+          const isDraggingDown = gestureState.dy > 6;
+          return scrollIsAtTop && isDraggingDown;
+        },
+
+        onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+          if (sheetSnapLevelRef.current !== "full") {
+            return Math.abs(gestureState.dy) > 4 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.1;
+          }
+          return false;
+        },
+
         onPanResponderGrant: () => {
           bottomPanelTranslateY.stopAnimation((value) => {
             sheetOffsetRef.current = typeof value === "number" ? value : 0;
           });
         },
+
         onPanResponderMove: (_, gestureState) => {
           const rawValue = sheetOffsetRef.current + gestureState.dy;
           const nextValue =
@@ -584,6 +609,7 @@ export default function App() {
                 : rawValue;
           bottomPanelTranslateY.setValue(nextValue);
         },
+
         onPanResponderRelease: (_, gestureState) => {
           const currentValue = clamp(sheetOffsetRef.current + gestureState.dy, snapOffsets.full, snapOffsets.collapsed);
           sheetOffsetRef.current = currentValue;
@@ -831,6 +857,19 @@ export default function App() {
             <Text style={styles.avatarText}>
               {isBootstrapping ? "..." : isAuthenticated ? (userProfile.full_name ?? userProfile.name).trim().charAt(0).toUpperCase() || "U" : "?"}
             </Text>
+            {isAuthenticated && (
+              <View style={{
+                position: "absolute",
+                top: 1,
+                right: 1,
+                width: 10,
+                height: 10,
+                borderRadius: 5,
+                backgroundColor: "#22c55e",
+                borderWidth: 1.5,
+                borderColor: "#ffffff",
+              }} />
+            )}
           </View>
         </Pressable>
 
@@ -846,7 +885,12 @@ export default function App() {
               },
             ]}
           >
-            <Text style={styles.routeSummaryTime}>{formatDurationHours(activeRoute.durationMin)}</Text>
+            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
+              <Text style={styles.routeSummaryTime}>{formatDurationHours(activeRoute.durationMin)}</Text>
+              <Text style={{ color: "#163f35", fontSize: 14, fontWeight: "600" }}>
+                · {activeRoute.distanceKm} км
+              </Text>
+            </View>
           </Animated.View>
         ) : null}
       </View>
@@ -865,71 +909,31 @@ export default function App() {
       </Animated.View>
 
       <Animated.View
+        {...bottomPanelPanResponder.panHandlers}
         style={[
           styles.bottomPanel,
           { height: bottomSheetFullHeight, transform: [{ translateY: bottomPanelTranslateY }] },
         ]}
       >
-        <View {...bottomPanelPanResponder.panHandlers} style={styles.sheetHeader}>
-          <View style={styles.grabberWrap}>
-            <View style={styles.grabber} />
-            <Text style={styles.sheetStateLabel}>
-              {sheetSnapLevel === "collapsed" ? "Потяните вверх" : sheetSnapLevel === "half" ? "Потяните выше" : "Потяните вниз"}
-            </Text>
-          </View>
+        <View style={styles.sheetHeader}>
+          <View style={styles.grabber} />
         </View>
 
         <ScrollView
           ref={bottomPanelScrollRef}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.bottomPanelContent}
-          bounces={false}
+          scrollEnabled={sheetSnapLevel === "full"}
           scrollEventThrottle={16}
-          onScrollBeginDrag={(event) => {
-            scrollDragLastOffsetY.current = event.nativeEvent.contentOffset.y;
+          onScroll={(e) => {
+            scrollDragLastOffsetY.current = e.nativeEvent.contentOffset.y;
           }}
-          onScroll={(event) => {
-            const offsetY = event.nativeEvent.contentOffset.y;
-            const deltaY = offsetY - scrollDragLastOffsetY.current;
-            scrollDragLastOffsetY.current = offsetY;
-
-            if (offsetY <= 0 && deltaY < 0 && sheetOffsetRef.current > snapOffsets.full) {
-              bottomPanelTranslateY.stopAnimation((value) => {
-                const currentValue = typeof value === "number" ? value : 0;
-                const nextValue = clamp(currentValue + deltaY, snapOffsets.full, snapOffsets.collapsed);
-                sheetOffsetRef.current = nextValue;
-                bottomPanelTranslateY.setValue(nextValue);
-                bottomPanelScrollRef.current?.scrollTo({ y: 0, animated: false });
-              });
-            }
-
-            if (offsetY <= 0 && deltaY > 0 && sheetOffsetRef.current < snapOffsets.collapsed) {
-              bottomPanelTranslateY.stopAnimation((value) => {
-                const currentValue = typeof value === "number" ? value : 0;
-                const nextValue = clamp(currentValue + deltaY, snapOffsets.full, snapOffsets.collapsed);
-                sheetOffsetRef.current = nextValue;
-                bottomPanelTranslateY.setValue(nextValue);
-                bottomPanelScrollRef.current?.scrollTo({ y: 0, animated: false });
-              });
-            }
-          }}
-          onScrollEndDrag={() => {
-            if (sheetOffsetRef.current < snapOffsets.collapsed) {
-              animateSheetTo(getSnapTarget(sheetOffsetRef.current, 0));
-            }
-          }}
-          onMomentumScrollEnd={() => {
-            bottomPanelTranslateY.stopAnimation((value) => {
-              sheetOffsetRef.current = typeof value === "number" ? value : 0;
-            });
-          }}
-          scrollEnabled={sheetSnapLevel !== "collapsed"}
         >
           <View style={styles.sheetHeaderSpacer} />
 
-          <Text style={styles.panelTitle}>Постройте маршрут</Text>
+          <Text style={styles.panelTitle}>Планирование маршрута</Text>
           <Text style={styles.panelSubtitle}>
-            Полноэкранная карта Алматы с вариантами маршрутов для чувствительных к жаре, пользователей с коляской и мобильных пешеходов.
+            Выберите начальную и конечную точки для построения оптимального пути.
           </Text>
 
           {hasBuiltRoutes && !journeyStarted ? (
@@ -941,7 +945,11 @@ export default function App() {
                 return (
                   <Pressable
                     key={route.id}
-                    style={[styles.routeCard, selected && styles.routeCardSelected]}
+                    style={[
+                      styles.routeCard,
+                      selected && styles.routeCardSelected,
+                      { borderLeftWidth: 4, borderLeftColor: route.color },
+                    ]}
                     onPress={() => {
                       setSelectedRouteId(route.id);
                       setJourneyStarted(false);
@@ -954,7 +962,7 @@ export default function App() {
                           <Text style={styles.routeNumberText}>{index + 1}</Text>
                         </View>
                         <View style={styles.routeCopy}>
-                          <Text style={styles.routeTitle}>{route.title}</Text>
+                          <Text style={styles.routeTitle}>{route.title === 'Safest' ? 'Безопасный' : route.title === 'Comfortable' ? 'Комфортный' : 'Быстрый'}</Text>
                           <Text style={styles.routeSubtitle}>{route.subtitle}</Text>
                         </View>
                       </View>
@@ -975,7 +983,10 @@ export default function App() {
 
               <Pressable
                 style={[styles.primaryButton, styles.startButton]}
-                onPress={() => setJourneyStarted(true)}
+                onPress={() => {
+                  setJourneyStarted(true);
+                  animateSheetTo(snapOffsets.collapsed);
+                }}
               >
                 <Text style={styles.primaryButtonText}>Начать маршрут</Text>
               </Pressable>
@@ -992,20 +1003,25 @@ export default function App() {
             </View>
           ) : null}
 
-          <TextInput
-          value={from}
-          onChangeText={setFrom}
-          placeholder="Откуда?"
-            placeholderTextColor="#7c8f88"
-            style={styles.input}
-          />
-          <TextInput
-            value={to}
-            onChangeText={setTo}
-            placeholder="Куда?"
-            placeholderTextColor="#7c8f88"
-            style={styles.input}
-          />
+          <View style={{ borderLeftWidth: 3, borderColor: "#2563eb", borderRadius: 14, marginBottom: 8 }}>
+            <TextInput
+              value={from}
+              onChangeText={setFrom}
+              placeholder="Откуда?"
+              placeholderTextColor="#7c8f88"
+              style={[styles.input, { marginBottom: 0, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }]}
+            />
+          </View>
+          
+          <View style={{ borderLeftWidth: 3, borderColor: "#dc2626", borderRadius: 14, marginBottom: 8 }}>
+            <TextInput
+              value={to}
+              onChangeText={setTo}
+              placeholder="Куда?"
+              placeholderTextColor="#7c8f88"
+              style={[styles.input, { marginBottom: 0, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }]}
+            />
+          </View>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.exampleRow}>
             {examples.map((place) => (
@@ -1034,9 +1050,9 @@ export default function App() {
           <View style={styles.audienceRow}>
             {(
               [
-                { id: "heat", label: "Чувствительность к жаре" },
+                { id: "heat", label: "Тень" },
                 { id: "stroller", label: "Коляска" },
-                { id: "mobile", label: "Мобильный" },
+                { id: "mobile", label: "Скорость" },
               ] as const
             ).map((option) => {
               const active = audience === option.id;
@@ -1056,7 +1072,7 @@ export default function App() {
           <Text style={styles.audienceHelper}>{AUDIENCE_COPY[audience].helper}</Text>
 
           <Pressable style={styles.primaryButton} onPress={submitRouteSearch}>
-            <Text style={styles.primaryButtonText}>Построить 3 маршрута</Text>
+            <Text style={styles.primaryButtonText}>Построить маршруты</Text>
           </Pressable>
 
           {hasBuiltRoutes && startPoint && endPoint && activeRoute ? (
@@ -1110,18 +1126,18 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   avatarCircle: {
-    width: 48,
-    height: 48,
+    width: 44,
+    height: 44,
     borderRadius: 999,
-    backgroundColor: "rgba(255, 255, 255, 0.94)",
-    borderWidth: 1,
-    borderColor: "rgba(22, 63, 53, 0.14)",
+    backgroundColor: "rgba(255, 255, 255, 0.96)",
+    borderWidth: 1.5,
+    borderColor: "rgba(22, 63, 53, 0.18)",
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#0e241f",
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
     elevation: 4,
   },
   avatarText: {
@@ -1159,8 +1175,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   routeSummaryTime: {
-    color: "#11201c",
-    fontSize: 24,
+    color: "#163f35",
+    fontSize: 18,
     fontWeight: "800",
     textAlign: "center",
   },
@@ -1219,14 +1235,16 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    backgroundColor: "rgba(248, 252, 250, 0.98)",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: "#f7faf8",
     overflow: "hidden",
+    borderTopWidth: 1,
+    borderColor: "rgba(180, 210, 200, 0.5)",
   },
   bottomPanelContent: {
     paddingHorizontal: 18,
-    paddingBottom: 20,
+    paddingBottom: 40,
   },
   sheetHeader: {
     position: "absolute",
@@ -1235,60 +1253,49 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 5,
     backgroundColor: "rgba(248, 252, 250, 0.98)",
-    paddingBottom: 8,
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    minHeight: SHEET_HEADER_HEIGHT,
-    justifyContent: "center",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    shadowColor: "#102421",
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 3,
+    paddingBottom: 12,
+    paddingHorizontal: 0,
+    paddingTop: 8,
+    height: SHEET_HEADER_HEIGHT,
+    alignItems: "center",
+    justifyContent: "flex-start",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
   },
   sheetHeaderSpacer: {
     height: SHEET_HEADER_HEIGHT,
   },
-  grabberWrap: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
   grabber: {
     alignSelf: "center",
-    width: 56,
-    height: 5,
+    width: 40,
+    height: 4,
     borderRadius: 999,
-    backgroundColor: "#c9d7d2",
-  },
-  sheetStateLabel: {
-    color: "#5f766e",
-    fontSize: 13,
-    fontWeight: "700",
-    marginTop: 8,
+    backgroundColor: "#b0c4bc",
+    marginTop: 6,
+    marginBottom: 2,
   },
   panelTitle: {
-    color: "#11201c",
-    fontSize: 24,
+    color: "#0d1c18",
+    fontSize: 20,
     fontWeight: "800",
-    marginTop: 8,
+    marginTop: 4,
+    letterSpacing: -0.3,
   },
   panelSubtitle: {
-    color: "#5a746b",
-    marginTop: 4,
-    marginBottom: 14,
-    lineHeight: 20,
+    color: "#6b8278",
+    marginTop: 3,
+    marginBottom: 12,
+    fontSize: 13,
+    lineHeight: 18,
   },
   input: {
-    borderWidth: 1,
-    borderColor: "#d4e0db",
-    borderRadius: 18,
-    backgroundColor: "#ffffff",
+    borderWidth: 0,
+    borderRadius: 14,
+    backgroundColor: "#eef4f1",
     color: "#11201c",
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    marginBottom: 10,
+    paddingVertical: 13,
+    marginBottom: 8,
     fontSize: 15,
   },
   exampleRow: {
@@ -1297,12 +1304,12 @@ const styles = StyleSheet.create({
   },
   exampleChip: {
     borderRadius: 999,
-    backgroundColor: "#e9f1ee",
+    backgroundColor: "#eef4f1",
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   exampleChipText: {
-    color: "#35534a",
+    color: "#3d5c52",
     fontWeight: "600",
   },
   audienceRow: {
@@ -1313,22 +1320,21 @@ const styles = StyleSheet.create({
   },
   audienceChip: {
     borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#d4e0db",
-    backgroundColor: "#ffffff",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    backgroundColor: "#eef4f1",
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderWidth: 0,
   },
   audienceChipActive: {
     backgroundColor: "#163f35",
-    borderColor: "#163f35",
   },
   audienceChipText: {
-    color: "#27483f",
-    fontWeight: "700",
+    color: "#3d5c52",
+    fontSize: 13,
+    fontWeight: "600",
   },
   audienceChipTextActive: {
-    color: "#f5fbf8",
+    color: "#ffffff",
   },
   audienceHelper: {
     color: "#5a746b",
@@ -1336,16 +1342,23 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   primaryButton: {
-    marginTop: 14,
-    borderRadius: 18,
     backgroundColor: "#163f35",
-    alignItems: "center",
+    borderRadius: 16,
     paddingVertical: 15,
+    alignItems: "center",
+    marginTop: 14,
+    marginBottom: 4,
+    shadowColor: "#163f35",
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
   },
   primaryButtonText: {
-    color: "#f7fcfa",
-    fontSize: 15,
-    fontWeight: "800",
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "700",
+    letterSpacing: 0.2,
   },
   routesSection: {
     marginBottom: 16,
@@ -1355,20 +1368,21 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   routeCard: {
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#d8e3de",
+    borderRadius: 18,
     backgroundColor: "#ffffff",
-    padding: 14,
-    gap: 10,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1.5,
+    borderColor: "transparent",
+    shadowColor: "#0e2420",
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
   routeCardSelected: {
-    borderColor: "#173f35",
-    shadowColor: "#173f35",
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+    borderColor: "#163f35",
+    backgroundColor: "#f2f9f6",
   },
   routeHeader: {
     flexDirection: "row",
@@ -1466,4 +1480,3 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 });
-
