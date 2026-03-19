@@ -14,10 +14,12 @@ import {
 } from "react-native";
 import MapView, { Marker, Polyline, type LatLng, type Region } from "react-native-maps";
 import LoginScreen from "./components/LoginScreen";
+import ProfileScreen from "./components/ProfileScreen";
 import RegisterScreen from "./components/RegisterScreen";
 
 type Audience = "heat" | "stroller" | "mobile";
 type RouteId = "safest" | "comfortable" | "fastest";
+type Screen = "login" | "register" | "map" | "profile";
 
 type RouteOption = {
   id: RouteId;
@@ -32,6 +34,11 @@ type RouteOption = {
 type Place = {
   name: string;
   coordinate: LatLng;
+};
+
+type UserProfile = {
+  name: string;
+  email: string;
 };
 
 const ALMATY_REGION: Region = {
@@ -232,7 +239,13 @@ export default function App() {
   const { height: windowHeight } = useWindowDimensions();
   const statusBarInset = StatusBar.currentHeight ?? 0;
   const mapRef = useRef<MapView | null>(null);
-  const [currentScreen, setCurrentScreen] = useState<"login" | "register" | "map">("login");
+  const [currentScreen, setCurrentScreen] = useState<Screen>("map");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authRedirectScreen, setAuthRedirectScreen] = useState<Exclude<Screen, "login" | "register">>("profile");
+  const [userProfile, setUserProfile] = useState<UserProfile>({
+    name: "Гость",
+    email: "guest@example.com",
+  });
   const bottomPanelScrollRef = useRef<ScrollView | null>(null);
   const routeSummaryOpacity = useRef(new Animated.Value(0)).current;
   const routeSummaryTranslateY = useRef(new Animated.Value(-12)).current;
@@ -240,8 +253,8 @@ export default function App() {
   const sheetOffsetRef = useRef(0);
   const scrollDragLastOffsetY = useRef(0);
   const [audience, setAudience] = useState<Audience>("heat");
-  const [from, setFrom] = useState("Парк Панфиловцев");
-  const [to, setTo] = useState("Мега Алма-Ата");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [startPoint, setStartPoint] = useState<Place | null>(resolvePlace("Парк Панфиловцев") ?? null);
   const [endPoint, setEndPoint] = useState<Place | null>(resolvePlace("Мега Алма-Ата") ?? null);
   const [routes, setRoutes] = useState<RouteOption[]>([]);
@@ -434,6 +447,53 @@ export default function App() {
 
   const examples = useMemo(() => LANDMARKS.slice(0, 6), []);
 
+  function deriveNameFromEmail(email: string) {
+    const emailPrefix = email.trim().split("@")[0];
+    return emailPrefix || "Пользователь";
+  }
+
+  function openProfileEntry() {
+    if (isAuthenticated) {
+      setCurrentScreen("profile");
+      return;
+    }
+
+    setAuthRedirectScreen("profile");
+    setCurrentScreen("login");
+  }
+
+  function handleLogin({ email }: { email: string }) {
+    const normalizedEmail = email.trim() || "guest@example.com";
+
+    setUserProfile((currentProfile) => ({
+      name: currentProfile.name === "Гость" ? deriveNameFromEmail(normalizedEmail) : currentProfile.name,
+      email: normalizedEmail,
+    }));
+    setIsAuthenticated(true);
+    setCurrentScreen(authRedirectScreen);
+  }
+
+  function handleRegister({ name, email }: { name: string; email: string }) {
+    const normalizedName = name.trim() || "Пользователь";
+    const normalizedEmail = email.trim() || "guest@example.com";
+
+    setUserProfile({
+      name: normalizedName,
+      email: normalizedEmail,
+    });
+    setIsAuthenticated(true);
+    setCurrentScreen(authRedirectScreen);
+  }
+
+  function handleLogout() {
+    setIsAuthenticated(false);
+    setUserProfile({
+      name: "Гость",
+      email: "guest@example.com",
+    });
+    setCurrentScreen("map");
+  }
+
   function submitRouteSearch() {
     const resolvedStart = resolvePlace(from);
     const resolvedEnd = resolvePlace(to);
@@ -462,7 +522,7 @@ export default function App() {
   if (currentScreen === 'login') {
     return (
       <LoginScreen
-        onLogin={() => setCurrentScreen('map')}
+        onLogin={handleLogin}
         onNavigateToRegister={() => setCurrentScreen('register')}
       />
     );
@@ -471,8 +531,19 @@ export default function App() {
   if (currentScreen === 'register') {
     return (
       <RegisterScreen
-        onRegister={() => setCurrentScreen('map')}
+        onRegister={handleRegister}
         onNavigateToLogin={() => setCurrentScreen('login')}
+      />
+    );
+  }
+
+  if (currentScreen === "profile") {
+    return (
+      <ProfileScreen
+        name={userProfile.name}
+        email={userProfile.email}
+        onBack={() => setCurrentScreen("map")}
+        onLogout={handleLogout}
       />
     );
   }
@@ -516,11 +587,21 @@ export default function App() {
           : null}
       </MapView>
 
-      {showStartedJourneySummary && activeRoute ? (
-        <View pointerEvents="none" style={styles.topOverlay}>
+      <View style={styles.topOverlay}>
+        <Pressable style={styles.avatarButton} onPress={openProfileEntry}>
+          <View style={styles.avatarCircle}>
+            <Text style={styles.avatarText}>
+              {isAuthenticated ? userProfile.name.trim().charAt(0).toUpperCase() || "U" : "?"}
+            </Text>
+          </View>
+        </Pressable>
+
+        {showStartedJourneySummary && activeRoute ? (
           <Animated.View
+            pointerEvents="none"
             style={[
               styles.routeSummaryBanner,
+              styles.routeSummaryBannerInline,
               {
                 opacity: routeSummaryOpacity,
                 transform: [{ translateY: routeSummaryTranslateY }],
@@ -529,8 +610,8 @@ export default function App() {
           >
             <Text style={styles.routeSummaryTime}>{formatDurationHours(activeRoute.durationMin)}</Text>
           </Animated.View>
-        </View>
-      ) : null}
+        ) : null}
+      </View>
 
       <Animated.View
         pointerEvents={sheetSnapLevel === "collapsed" ? "none" : "auto"}
@@ -759,16 +840,44 @@ const styles = StyleSheet.create({
     top: (StatusBar.currentHeight ?? 0) + 10,
     left: 18,
     right: 18,
-    alignItems: "stretch",
+    flexDirection: "row",
+    alignItems: "center",
+    columnGap: 12,
+    zIndex: 6,
+  },
+  avatarButton: {
+    borderRadius: 999,
+  },
+  avatarCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 255, 255, 0.94)",
+    borderWidth: 1,
+    borderColor: "rgba(22, 63, 53, 0.14)",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#0e241f",
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  avatarText: {
+    color: "#163f35",
+    fontSize: 18,
+    fontWeight: "800",
   },
   routeSummaryBanner: {
-    alignSelf: "stretch",
     backgroundColor: "rgba(255, 255, 255, 0.94)",
     borderRadius: 22,
     paddingHorizontal: 14,
     paddingVertical: 10,
     alignItems: "center",
     justifyContent: "center",
+  },
+  routeSummaryBannerInline: {
+    flex: 1,
   },
   routeSummaryTime: {
     color: "#11201c",
