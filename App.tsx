@@ -10,6 +10,8 @@ import {
   View,
 } from "react-native";
 import MapView, { Marker, Polyline, type LatLng, type Region } from "react-native-maps";
+import LoginScreen from "./components/LoginScreen";
+import RegisterScreen from "./components/RegisterScreen";
 
 type Audience = "heat" | "stroller" | "mobile";
 type RouteId = "safest" | "comfortable" | "fastest";
@@ -204,6 +206,7 @@ function buildRoutes(start: LatLng, end: LatLng): RouteOption[] {
 
 export default function App() {
   const mapRef = useRef<MapView | null>(null);
+  const [currentScreen, setCurrentScreen] = useState<'login' | 'register' | 'map'>('login');
   const [audience, setAudience] = useState<Audience>("heat");
   const [from, setFrom] = useState("Panfilov Park");
   const [to, setTo] = useState("Mega Alma-Ata");
@@ -277,6 +280,24 @@ export default function App() {
     setHasBuiltRoutes(true);
     setJourneyStarted(false);
     setSelectedRouteId(AUDIENCE_COPY[audience].recommended);
+  }
+
+  if (currentScreen === 'login') {
+    return (
+      <LoginScreen
+        onLogin={() => setCurrentScreen('map')}
+        onNavigateToRegister={() => setCurrentScreen('register')}
+      />
+    );
+  }
+
+  if (currentScreen === 'register') {
+    return (
+      <RegisterScreen
+        onRegister={() => setCurrentScreen('map')}
+        onNavigateToLogin={() => setCurrentScreen('login')}
+      />
+    );
   }
 
   return (
