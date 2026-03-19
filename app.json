@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Civic Current Mobile",
+    "slug": "civic-current-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#f4fbf6"
+    },
+    "assetBundlePatterns": ["**/*"]
+  }
+}
