@@ -26,12 +26,12 @@ export default function LoginScreen({ onLogin, onNavigateToRegister }: LoginScre
         style={styles.container}
       >
         <View style={styles.card}>
-          <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Log in to your account</Text>
+          <Text style={styles.title}>С возвращением</Text>
+          <Text style={styles.subtitle}>Войдите в свой аккаунт</Text>
           
           <View style={styles.form}>
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Email</Text>
+              <Text style={styles.label}>Электронная почта</Text>
               <TextInput
                 style={styles.input}
                 placeholder="m@example.com"
@@ -44,7 +44,7 @@ export default function LoginScreen({ onLogin, onNavigateToRegister }: LoginScre
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Password</Text>
+              <Text style={styles.label}>Пароль</Text>
               <TextInput
                 style={styles.input}
                 placeholder="••••••••"
@@ -56,14 +56,14 @@ export default function LoginScreen({ onLogin, onNavigateToRegister }: LoginScre
             </View>
 
             <Pressable style={styles.primaryButton} onPress={onLogin}>
-              <Text style={styles.primaryButtonText}>Log In</Text>
+              <Text style={styles.primaryButtonText}>Войти</Text>
             </Pressable>
           </View>
           
           <View style={styles.footer}>
-            <Text style={styles.footerText}>Don't have an account? </Text>
+            <Text style={styles.footerText}>Нет аккаунта? </Text>
             <Pressable onPress={onNavigateToRegister}>
-              <Text style={styles.linkText}>Sign up</Text>
+              <Text style={styles.linkText}>Зарегистрироваться</Text>
             </Pressable>
           </View>
         </View>

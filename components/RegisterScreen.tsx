@@ -29,15 +29,15 @@ export default function RegisterScreen({ onRegister, onNavigateToLogin }: Regist
       >
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <View style={styles.card}>
-            <Text style={styles.title}>Create Account</Text>
-            <Text style={styles.subtitle}>Sign up to get started</Text>
+            <Text style={styles.title}>Создать аккаунт</Text>
+            <Text style={styles.subtitle}>Зарегистрируйтесь, чтобы начать</Text>
             
             <View style={styles.form}>
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Full Name</Text>
+                <Text style={styles.label}>Полное имя</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="John Doe"
+                  placeholder="Иван Иванов"
                   placeholderTextColor="#7c8f88"
                   value={name}
                   onChangeText={setName}
@@ -46,7 +46,7 @@ export default function RegisterScreen({ onRegister, onNavigateToLogin }: Regist
               </View>
 
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Email</Text>
+                <Text style={styles.label}>Электронная почта</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="m@example.com"
@@ -59,7 +59,7 @@ export default function RegisterScreen({ onRegister, onNavigateToLogin }: Regist
               </View>
 
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Password</Text>
+                <Text style={styles.label}>Пароль</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="••••••••"
@@ -71,14 +71,14 @@ export default function RegisterScreen({ onRegister, onNavigateToLogin }: Regist
               </View>
 
               <Pressable style={styles.primaryButton} onPress={onRegister}>
-                <Text style={styles.primaryButtonText}>Sign Up</Text>
+                <Text style={styles.primaryButtonText}>Зарегистрироваться</Text>
               </Pressable>
             </View>
             
             <View style={styles.footer}>
-              <Text style={styles.footerText}>Already have an account? </Text>
+              <Text style={styles.footerText}>Уже есть аккаунт? </Text>
               <Pressable onPress={onNavigateToLogin}>
-                <Text style={styles.linkText}>Log in</Text>
+                <Text style={styles.linkText}>Войти</Text>
               </Pressable>
             </View>
           </View>
