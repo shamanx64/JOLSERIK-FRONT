@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  Animated,
+  PanResponder,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
+  StatusBar,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import MapView, { Marker, Polyline, type LatLng, type Region } from "react-native-maps";
@@ -39,30 +42,30 @@ const ALMATY_REGION: Region = {
 };
 
 const LANDMARKS: Place[] = [
-  { name: "Panfilov Park", coordinate: { latitude: 43.2613, longitude: 76.9454 } },
-  { name: "Abay Square", coordinate: { latitude: 43.2382, longitude: 76.9458 } },
-  { name: "Mega Alma-Ata", coordinate: { latitude: 43.2016, longitude: 76.8926 } },
-  { name: "Almaty Central Stadium", coordinate: { latitude: 43.2386, longitude: 76.9275 } },
-  { name: "Sayran Bus Station", coordinate: { latitude: 43.2265, longitude: 76.8622 } },
-  { name: "Green Bazaar", coordinate: { latitude: 43.2634, longitude: 76.9426 } },
-  { name: "Kok Tobe Lower Park", coordinate: { latitude: 43.2328, longitude: 76.9756 } },
-  { name: "Esentai Mall", coordinate: { latitude: 43.2186, longitude: 76.9273 } },
+  { name: "Парк Панфиловцев", coordinate: { latitude: 43.2613, longitude: 76.9454 } },
+  { name: "Площадь Абая", coordinate: { latitude: 43.2382, longitude: 76.9458 } },
+  { name: "Мега Алма-Ата", coordinate: { latitude: 43.2016, longitude: 76.8926 } },
+  { name: "Центральный стадион Алматы", coordinate: { latitude: 43.2386, longitude: 76.9275 } },
+  { name: "Автовокзал Сайран", coordinate: { latitude: 43.2265, longitude: 76.8622 } },
+  { name: "Зеленый базар", coordinate: { latitude: 43.2634, longitude: 76.9426 } },
+  { name: "Нижний парк Кок-Тобе", coordinate: { latitude: 43.2328, longitude: 76.9756 } },
+  { name: "Есентай Молл", coordinate: { latitude: 43.2186, longitude: 76.9273 } },
 ];
 
 const AUDIENCE_COPY: Record<Audience, { title: string; helper: string; recommended: RouteId }> = {
   heat: {
-    title: "Heat sensitive",
-    helper: "Prefers greener and more shaded segments with lower heat stress.",
+    title: "Чувствительность к жаре",
+    helper: "Предпочитает более зеленые и тенистые участки с меньшей тепловой нагрузкой.",
     recommended: "safest",
   },
   stroller: {
-    title: "Stroller",
-    helper: "Prioritizes gentler inclines and more comfortable rolling segments.",
+    title: "Коляска",
+    helper: "Отдает приоритет более плавным подъемам и комфортным участкам для движения.",
     recommended: "comfortable",
   },
   mobile: {
-    title: "Mobile",
-    helper: "Optimizes for speed when stairs and hills are acceptable.",
+    title: "Мобильный",
+    helper: "Оптимизирует маршрут по скорости, если лестницы и подъемы допустимы.",
     recommended: "fastest",
   },
 };
@@ -126,6 +129,21 @@ function polylineDistanceKm(points: LatLng[]) {
   return points.slice(1).reduce((sum, point, index) => sum + haversineKm(points[index], point), 0);
 }
 
+function formatDurationHours(durationMin: number) {
+  const hours = Math.floor(durationMin / 60);
+  const minutes = durationMin % 60;
+
+  if (hours === 0) {
+    return `${minutes} мин`;
+  }
+
+  if (minutes === 0) {
+    return `${hours} ч`;
+  }
+
+  return `${hours} ч ${minutes} мин`;
+}
+
 function nearestPlace(coordinate: LatLng, candidates: Place[]) {
   return candidates.reduce((best, candidate) => {
     const candidateDistance = haversineKm(coordinate, candidate.coordinate);
@@ -134,13 +152,19 @@ function nearestPlace(coordinate: LatLng, candidates: Place[]) {
   });
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+const SHEET_HEADER_HEIGHT = 44;
+
 function buildRoutes(start: LatLng, end: LatLng): RouteOption[] {
   const shadeAnchors = LANDMARKS.filter((place) =>
-    ["Panfilov Park", "Abay Square", "Kok Tobe Lower Park"].includes(place.name)
+    ["Парк Панфиловцев", "Площадь Абая", "Нижний парк Кок-Тобе"].includes(place.name)
   );
 
   const comfortAnchors = LANDMARKS.filter((place) =>
-    ["Mega Alma-Ata", "Esentai Mall", "Almaty Central Stadium", "Sayran Bus Station"].includes(place.name)
+    ["Мега Алма-Ата", "Есентай Молл", "Центральный стадион Алматы", "Автовокзал Сайран"].includes(place.name)
   );
 
   const safestAnchor = nearestPlace(interpolate(start, end, 0.5), shadeAnchors).coordinate;
@@ -176,8 +200,8 @@ function buildRoutes(start: LatLng, end: LatLng): RouteOption[] {
   return [
     {
       id: "safest",
-      title: "Safest",
-      subtitle: "Lower heat stress, greener corridor, easier recovery stops.",
+      title: "Самый безопасный",
+      subtitle: "Меньше тепловой нагрузки, больше зелени и удобных мест для передышки.",
       color: "#2dd4bf",
       coordinates: safestCoordinates,
       distanceKm: safestDistance.toFixed(1),
@@ -185,8 +209,8 @@ function buildRoutes(start: LatLng, end: LatLng): RouteOption[] {
     },
     {
       id: "comfortable",
-      title: "Comfortable",
-      subtitle: "Smoother stroller-friendly path with gentler turns and grade.",
+      title: "Комфортный",
+      subtitle: "Более плавный маршрут для коляски с мягкими поворотами и уклоном.",
       color: "#84cc16",
       coordinates: comfortableCoordinates,
       distanceKm: comfortableDistance.toFixed(1),
@@ -194,8 +218,8 @@ function buildRoutes(start: LatLng, end: LatLng): RouteOption[] {
     },
     {
       id: "fastest",
-      title: "Fastest",
-      subtitle: "Direct connection when stairs and hills are acceptable.",
+      title: "Самый быстрый",
+      subtitle: "Более прямой путь, если лестницы и подъемы приемлемы.",
       color: "#f97316",
       coordinates: fastestCoordinates,
       distanceKm: fastestDistance.toFixed(1),
@@ -205,20 +229,47 @@ function buildRoutes(start: LatLng, end: LatLng): RouteOption[] {
 }
 
 export default function App() {
+  const { height: windowHeight } = useWindowDimensions();
+  const statusBarInset = StatusBar.currentHeight ?? 0;
   const mapRef = useRef<MapView | null>(null);
-  const [currentScreen, setCurrentScreen] = useState<'login' | 'register' | 'map'>('login');
+  const [currentScreen, setCurrentScreen] = useState<"login" | "register" | "map">("login");
+  const bottomPanelScrollRef = useRef<ScrollView | null>(null);
+  const routeSummaryOpacity = useRef(new Animated.Value(0)).current;
+  const routeSummaryTranslateY = useRef(new Animated.Value(-12)).current;
+  const bottomPanelTranslateY = useRef(new Animated.Value(0)).current;
+  const sheetOffsetRef = useRef(0);
+  const scrollDragLastOffsetY = useRef(0);
   const [audience, setAudience] = useState<Audience>("heat");
-  const [from, setFrom] = useState("Panfilov Park");
-  const [to, setTo] = useState("Mega Alma-Ata");
-  const [startPoint, setStartPoint] = useState<Place | null>(resolvePlace("Panfilov Park") ?? null);
-  const [endPoint, setEndPoint] = useState<Place | null>(resolvePlace("Mega Alma-Ata") ?? null);
+  const [from, setFrom] = useState("Парк Панфиловцев");
+  const [to, setTo] = useState("Мега Алма-Ата");
+  const [startPoint, setStartPoint] = useState<Place | null>(resolvePlace("Парк Панфиловцев") ?? null);
+  const [endPoint, setEndPoint] = useState<Place | null>(resolvePlace("Мега Алма-Ата") ?? null);
   const [routes, setRoutes] = useState<RouteOption[]>([]);
   const [hasBuiltRoutes, setHasBuiltRoutes] = useState(false);
   const [journeyStarted, setJourneyStarted] = useState(false);
   const [selectedRouteId, setSelectedRouteId] = useState<RouteId>(AUDIENCE_COPY.heat.recommended);
+  const [sheetSnapLevel, setSheetSnapLevel] = useState<"collapsed" | "half" | "full">("half");
+  const [sheetVisibleHeight, setSheetVisibleHeight] = useState(0);
 
   const recommendedRouteId = AUDIENCE_COPY[audience].recommended;
   const activeRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0];
+  const showStartedJourneySummary = journeyStarted && !!activeRoute;
+  const bottomSheetPeekHeight = SHEET_HEADER_HEIGHT;
+  const bottomSheetHalfVisibleHeight = Math.min(Math.max(windowHeight * 0.44, 300), windowHeight * 0.56);
+  const bottomSheetFullHeight = Math.min(windowHeight - statusBarInset - 28, windowHeight * 0.88);
+  const snapOffsets = useMemo(
+    () => ({
+      collapsed: Math.max(bottomSheetFullHeight - bottomSheetPeekHeight, 0),
+      half: Math.max(bottomSheetFullHeight - bottomSheetHalfVisibleHeight, 0),
+      full: 0,
+    }),
+    [bottomSheetFullHeight, bottomSheetHalfVisibleHeight]
+  );
+  const backdropOpacity = bottomPanelTranslateY.interpolate({
+    inputRange: [snapOffsets.full, snapOffsets.collapsed],
+    outputRange: [0.3, 0],
+    extrapolate: "clamp",
+  });
 
   const etaText = useMemo(() => {
     if (!activeRoute) {
@@ -239,6 +290,126 @@ export default function App() {
   }, [recommendedRouteId]);
 
   useEffect(() => {
+    bottomPanelTranslateY.setValue(snapOffsets.half);
+    sheetOffsetRef.current = snapOffsets.half;
+    setSheetSnapLevel("half");
+    bottomPanelScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [bottomPanelTranslateY, snapOffsets.half]);
+
+  useEffect(() => {
+    setSheetVisibleHeight(bottomSheetFullHeight - snapOffsets.half);
+  }, [bottomSheetFullHeight, snapOffsets.half]);
+
+  useEffect(() => {
+    let lastReportedHeight = -1;
+    const listenerId = bottomPanelTranslateY.addListener(({ value }) => {
+      const nextVisibleHeight = Math.round(bottomSheetFullHeight - value);
+
+      if (Math.abs(nextVisibleHeight - lastReportedHeight) >= 6) {
+        lastReportedHeight = nextVisibleHeight;
+        setSheetVisibleHeight(nextVisibleHeight);
+      }
+    });
+
+    return () => {
+      bottomPanelTranslateY.removeListener(listenerId);
+    };
+  }, [bottomPanelTranslateY, bottomSheetFullHeight]);
+
+  useEffect(() => {
+    if (showStartedJourneySummary) {
+      bottomPanelScrollRef.current?.scrollTo({ y: 0, animated: false });
+      routeSummaryOpacity.setValue(0);
+      routeSummaryTranslateY.setValue(-12);
+
+      Animated.parallel([
+        Animated.timing(routeSummaryOpacity, {
+          toValue: 1,
+          duration: 220,
+          useNativeDriver: true,
+        }),
+        Animated.timing(routeSummaryTranslateY, {
+          toValue: 0,
+          duration: 220,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      return;
+    }
+
+    routeSummaryOpacity.setValue(0);
+    routeSummaryTranslateY.setValue(-12);
+  }, [routeSummaryOpacity, routeSummaryTranslateY, showStartedJourneySummary]);
+
+  function animateSheetTo(targetValue: number, velocity = 0) {
+    const nextTarget = clamp(targetValue, snapOffsets.full, snapOffsets.collapsed);
+    const nextSnapLevel =
+      nextTarget === snapOffsets.full ? "full" : nextTarget === snapOffsets.half ? "half" : "collapsed";
+
+    Animated.spring(bottomPanelTranslateY, {
+      toValue: nextTarget,
+      velocity,
+      tension: 80,
+      friction: 14,
+      useNativeDriver: true,
+    }).start(() => {
+      sheetOffsetRef.current = nextTarget;
+      setSheetSnapLevel(nextSnapLevel);
+      if (nextSnapLevel !== "full") {
+        bottomPanelScrollRef.current?.scrollTo({ y: 0, animated: false });
+      }
+    });
+  }
+
+  function getSnapTarget(currentOffset: number, velocityY: number) {
+    const orderedSnapPoints = [snapOffsets.full, snapOffsets.half, snapOffsets.collapsed];
+
+    if (velocityY <= -0.7) {
+      const moreOpen = orderedSnapPoints.find((point) => point < currentOffset - 8);
+      return moreOpen ?? snapOffsets.full;
+    }
+
+    if (velocityY >= 0.7) {
+      const moreClosed = [...orderedSnapPoints].reverse().find((point) => point > currentOffset + 8);
+      return moreClosed ?? snapOffsets.collapsed;
+    }
+
+    return orderedSnapPoints.reduce((nearest, point) =>
+      Math.abs(point - currentOffset) < Math.abs(nearest - currentOffset) ? point : nearest
+    );
+  }
+
+  const bottomPanelPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gestureState) =>
+          Math.abs(gestureState.dy) > 6 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.15,
+        onPanResponderGrant: () => {
+          bottomPanelTranslateY.stopAnimation((value) => {
+            sheetOffsetRef.current = typeof value === "number" ? value : 0;
+          });
+        },
+        onPanResponderMove: (_, gestureState) => {
+          const rawValue = sheetOffsetRef.current + gestureState.dy;
+          const nextValue =
+            rawValue < snapOffsets.full
+              ? snapOffsets.full - (snapOffsets.full - rawValue) * 0.22
+              : rawValue > snapOffsets.collapsed
+                ? snapOffsets.collapsed + (rawValue - snapOffsets.collapsed) * 0.22
+                : rawValue;
+          bottomPanelTranslateY.setValue(nextValue);
+        },
+        onPanResponderRelease: (_, gestureState) => {
+          const currentValue = clamp(sheetOffsetRef.current + gestureState.dy, snapOffsets.full, snapOffsets.collapsed);
+          sheetOffsetRef.current = currentValue;
+          animateSheetTo(getSnapTarget(currentValue, gestureState.vy), gestureState.vy);
+        },
+      }),
+    [bottomPanelTranslateY, snapOffsets.collapsed, snapOffsets.full, snapOffsets.half]
+  );
+
+  useEffect(() => {
     if (!startPoint || !endPoint || !hasBuiltRoutes || routes.length === 0) {
       return;
     }
@@ -248,12 +419,18 @@ export default function App() {
       : routes;
 
     const allCoordinates = [startPoint.coordinate, endPoint.coordinate, ...visibleRoutes.flatMap((route) => route.coordinates)];
+    const bottomPadding = Math.max(sheetVisibleHeight + 24, 88);
 
     mapRef.current?.fitToCoordinates(allCoordinates, {
-      edgePadding: { top: 120, right: 60, bottom: 360, left: 60 },
+      edgePadding: {
+        top: showStartedJourneySummary ? 180 : 120,
+        right: 60,
+        bottom: showStartedJourneySummary ? Math.max(bottomPadding - 32, 96) : bottomPadding,
+        left: 60,
+      },
       animated: true,
     });
-  }, [endPoint, hasBuiltRoutes, journeyStarted, routes, selectedRouteId, startPoint]);
+  }, [endPoint, hasBuiltRoutes, journeyStarted, routes, selectedRouteId, sheetVisibleHeight, showStartedJourneySummary, startPoint]);
 
   const examples = useMemo(() => LANDMARKS.slice(0, 6), []);
 
@@ -263,14 +440,14 @@ export default function App() {
 
     if (!resolvedStart || !resolvedEnd) {
       Alert.alert(
-        "Unknown place",
-        "Use one of the suggested Almaty landmarks or type a closer match such as Panfilov Park, Mega Alma-Ata, or Abay Square."
+        "Неизвестное место",
+        "Используйте одну из предложенных точек Алматы или введите более близкое совпадение, например Парк Панфиловцев, Мега Алма-Ата или Площадь Абая."
       );
       return;
     }
 
     if (resolvedStart.name === resolvedEnd.name) {
-      Alert.alert("Choose two different places", "Start point and destination cannot be the same.");
+      Alert.alert("Выберите две разные точки", "Точка отправления и пункт назначения не могут совпадать.");
       return;
     }
 
@@ -301,8 +478,21 @@ export default function App() {
   }
 
   return (
-    <SafeAreaView style={styles.screen}>
-      <MapView ref={mapRef} style={StyleSheet.absoluteFill} initialRegion={ALMATY_REGION} showsCompass showsScale>
+    <View style={styles.screen}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <MapView
+        ref={mapRef}
+        style={StyleSheet.absoluteFill}
+        initialRegion={ALMATY_REGION}
+        showsCompass
+        showsScale
+        mapPadding={{
+          top: statusBarInset + 12,
+          right: 16,
+          bottom: Math.max(sheetVisibleHeight + 16, 56),
+          left: 16,
+        }}
+      >
         {startPoint ? (
           <Marker coordinate={startPoint.coordinate} title="A" description={startPoint.name} pinColor="#2563eb" />
         ) : null}
@@ -326,23 +516,95 @@ export default function App() {
           : null}
       </MapView>
 
-      <View style={styles.topOverlay}>
-        <View style={styles.timePill}>
-          <Text style={styles.timeText}>GPS Navigator</Text>
+      {showStartedJourneySummary && activeRoute ? (
+        <View pointerEvents="none" style={styles.topOverlay}>
+          <Animated.View
+            style={[
+              styles.routeSummaryBanner,
+              {
+                opacity: routeSummaryOpacity,
+                transform: [{ translateY: routeSummaryTranslateY }],
+              },
+            ]}
+          >
+            <Text style={styles.routeSummaryTime}>{formatDurationHours(activeRoute.durationMin)}</Text>
+          </Animated.View>
         </View>
-        <View style={styles.legendCard}>
-          <Text style={styles.legendTitle}>Almaty accessibility routes</Text>
-          <Text style={styles.legendText}>A to B with safety, comfort, and speed alternatives.</Text>
+      ) : null}
+
+      <Animated.View
+        pointerEvents={sheetSnapLevel === "collapsed" ? "none" : "auto"}
+        style={[styles.sheetBackdrop, { opacity: backdropOpacity }]}
+      >
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => animateSheetTo(snapOffsets.collapsed)} />
+      </Animated.View>
+
+      <Animated.View
+        style={[
+          styles.bottomPanel,
+          { height: bottomSheetFullHeight, transform: [{ translateY: bottomPanelTranslateY }] },
+        ]}
+      >
+        <View {...bottomPanelPanResponder.panHandlers} style={styles.sheetHeader}>
+          <View style={styles.grabberWrap}>
+            <View style={styles.grabber} />
+            <Text style={styles.sheetStateLabel}>
+              {sheetSnapLevel === "collapsed" ? "Потяните вверх" : sheetSnapLevel === "half" ? "Потяните выше" : "Потяните вниз"}
+            </Text>
+          </View>
         </View>
-      </View>
 
-      <View style={styles.bottomPanel}>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.bottomPanelContent}>
-          <View style={styles.grabber} />
+        <ScrollView
+          ref={bottomPanelScrollRef}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.bottomPanelContent}
+          bounces={false}
+          scrollEventThrottle={16}
+          onScrollBeginDrag={(event) => {
+            scrollDragLastOffsetY.current = event.nativeEvent.contentOffset.y;
+          }}
+          onScroll={(event) => {
+            const offsetY = event.nativeEvent.contentOffset.y;
+            const deltaY = offsetY - scrollDragLastOffsetY.current;
+            scrollDragLastOffsetY.current = offsetY;
 
-          <Text style={styles.panelTitle}>Plan your route</Text>
+            if (offsetY <= 0 && deltaY < 0 && sheetOffsetRef.current > snapOffsets.full) {
+              bottomPanelTranslateY.stopAnimation((value) => {
+                const currentValue = typeof value === "number" ? value : 0;
+                const nextValue = clamp(currentValue + deltaY, snapOffsets.full, snapOffsets.collapsed);
+                sheetOffsetRef.current = nextValue;
+                bottomPanelTranslateY.setValue(nextValue);
+                bottomPanelScrollRef.current?.scrollTo({ y: 0, animated: false });
+              });
+            }
+
+            if (offsetY <= 0 && deltaY > 0 && sheetOffsetRef.current < snapOffsets.collapsed) {
+              bottomPanelTranslateY.stopAnimation((value) => {
+                const currentValue = typeof value === "number" ? value : 0;
+                const nextValue = clamp(currentValue + deltaY, snapOffsets.full, snapOffsets.collapsed);
+                sheetOffsetRef.current = nextValue;
+                bottomPanelTranslateY.setValue(nextValue);
+                bottomPanelScrollRef.current?.scrollTo({ y: 0, animated: false });
+              });
+            }
+          }}
+          onScrollEndDrag={() => {
+            if (sheetOffsetRef.current < snapOffsets.collapsed) {
+              animateSheetTo(getSnapTarget(sheetOffsetRef.current, 0));
+            }
+          }}
+          onMomentumScrollEnd={() => {
+            bottomPanelTranslateY.stopAnimation((value) => {
+              sheetOffsetRef.current = typeof value === "number" ? value : 0;
+            });
+          }}
+          scrollEnabled={sheetSnapLevel !== "collapsed"}
+        >
+          <View style={styles.sheetHeaderSpacer} />
+
+          <Text style={styles.panelTitle}>Постройте маршрут</Text>
           <Text style={styles.panelSubtitle}>
-            Full-screen Almaty map with route options for heat-sensitive people, stroller users, and mobile users.
+            Полноэкранная карта Алматы с вариантами маршрутов для чувствительных к жаре, пользователей с коляской и мобильных пешеходов.
           </Text>
 
           {hasBuiltRoutes && !journeyStarted ? (
@@ -358,6 +620,7 @@ export default function App() {
                     onPress={() => {
                       setSelectedRouteId(route.id);
                       setJourneyStarted(false);
+                      animateSheetTo(snapOffsets.half);
                     }}
                   >
                     <View style={styles.routeHeader}>
@@ -372,14 +635,14 @@ export default function App() {
                       </View>
                       {recommended ? (
                         <View style={styles.recommendedBadge}>
-                          <Text style={styles.recommendedBadgeText}>Recommended</Text>
+                          <Text style={styles.recommendedBadgeText}>Рекомендуется</Text>
                         </View>
                       ) : null}
                     </View>
 
                     <View style={styles.routeStats}>
-                      <Text style={styles.routeStat}>Distance: {route.distanceKm} km</Text>
-                      <Text style={styles.routeStat}>Time: {route.durationMin} min</Text>
+                      <Text style={styles.routeStat}>Расстояние: {route.distanceKm} км</Text>
+                      <Text style={styles.routeStat}>Время: {formatDurationHours(route.durationMin)}</Text>
                     </View>
                   </Pressable>
                 );
@@ -389,32 +652,32 @@ export default function App() {
                 style={[styles.primaryButton, styles.startButton]}
                 onPress={() => setJourneyStarted(true)}
               >
-                <Text style={styles.primaryButtonText}>Start the journey</Text>
+                <Text style={styles.primaryButtonText}>Начать маршрут</Text>
               </Pressable>
             </View>
           ) : null}
 
           {hasBuiltRoutes && journeyStarted && activeRoute ? (
             <View style={styles.startedJourneyCard}>
-              <Text style={styles.startedJourneyTitle}>Journey started</Text>
+              <Text style={styles.startedJourneyTitle}>Маршрут начат</Text>
               <Text style={styles.startedJourneyText}>
-                Your {activeRoute.title.toLowerCase()} route will take {activeRoute.durationMin} mins and {activeRoute.distanceKm} kms.
+                Ваш маршрут «{activeRoute.title.toLowerCase()}» займет {formatDurationHours(activeRoute.durationMin)} и составит {activeRoute.distanceKm} км.
               </Text>
-              <Text style={styles.startedJourneyEta}>Your ETA will be {etaText}.</Text>
+              <Text style={styles.startedJourneyEta}>Ожидаемое время прибытия: {etaText}.</Text>
             </View>
           ) : null}
 
           <TextInput
           value={from}
           onChangeText={setFrom}
-          placeholder="From where?"
+          placeholder="Откуда?"
             placeholderTextColor="#7c8f88"
             style={styles.input}
           />
           <TextInput
             value={to}
             onChangeText={setTo}
-            placeholder="To where?"
+            placeholder="Куда?"
             placeholderTextColor="#7c8f88"
             style={styles.input}
           />
@@ -446,9 +709,9 @@ export default function App() {
           <View style={styles.audienceRow}>
             {(
               [
-                { id: "heat", label: "Heat sensitive" },
-                { id: "stroller", label: "Stroller" },
-                { id: "mobile", label: "Mobile" },
+                { id: "heat", label: "Чувствительность к жаре" },
+                { id: "stroller", label: "Коляска" },
+                { id: "mobile", label: "Мобильный" },
               ] as const
             ).map((option) => {
               const active = audience === option.id;
@@ -468,21 +731,21 @@ export default function App() {
           <Text style={styles.audienceHelper}>{AUDIENCE_COPY[audience].helper}</Text>
 
           <Pressable style={styles.primaryButton} onPress={submitRouteSearch}>
-            <Text style={styles.primaryButtonText}>Build 3 routes</Text>
+            <Text style={styles.primaryButtonText}>Построить 3 маршрута</Text>
           </Pressable>
 
           {hasBuiltRoutes && startPoint && endPoint && activeRoute ? (
             <View style={styles.summaryCard}>
-              <Text style={styles.summaryTitle}>Active route: {activeRoute.title}</Text>
+              <Text style={styles.summaryTitle}>Активный маршрут: {activeRoute.title}</Text>
               <Text style={styles.summaryText}>
-                {startPoint.name} to {endPoint.name} with {activeRoute.distanceKm} km and about {activeRoute.durationMin} minutes.
-                {journeyStarted ? " Other route overlays are now hidden." : ""}
+                {startPoint.name} до {endPoint.name}, расстояние {activeRoute.distanceKm} км, примерное время {formatDurationHours(activeRoute.durationMin)}.
+                {journeyStarted ? " Остальные линии маршрутов скрыты." : ""}
               </Text>
             </View>
           ) : null}
         </ScrollView>
-      </View>
-    </SafeAreaView>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -493,40 +756,29 @@ const styles = StyleSheet.create({
   },
   topOverlay: {
     position: "absolute",
-    top: 14,
-    left: 14,
-    right: 14,
-    gap: 10,
+    top: (StatusBar.currentHeight ?? 0) + 10,
+    left: 18,
+    right: 18,
+    alignItems: "stretch",
   },
-  timePill: {
-    alignSelf: "flex-end",
-    backgroundColor: "rgba(14, 26, 24, 0.84)",
-    borderRadius: 999,
+  routeSummaryBanner: {
+    alignSelf: "stretch",
+    backgroundColor: "rgba(255, 255, 255, 0.94)",
+    borderRadius: 22,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  timeText: {
-    color: "#f6fbf9",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0.8,
-    textTransform: "uppercase",
-  },
-  legendCard: {
-    maxWidth: 270,
-    backgroundColor: "rgba(255, 255, 255, 0.92)",
-    borderRadius: 20,
-    padding: 14,
-    gap: 4,
-  },
-  legendTitle: {
+  routeSummaryTime: {
     color: "#11201c",
-    fontSize: 16,
+    fontSize: 24,
     fontWeight: "800",
+    textAlign: "center",
   },
-  legendText: {
-    color: "#49635a",
-    lineHeight: 18,
+  sheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#081512",
   },
   bottomPanel: {
     position: "absolute",
@@ -536,13 +788,38 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     backgroundColor: "rgba(248, 252, 250, 0.98)",
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 24,
-    maxHeight: "50%",
+    overflow: "hidden",
   },
   bottomPanelContent: {
+    paddingHorizontal: 18,
+    paddingBottom: 20,
+  },
+  sheetHeader: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 5,
+    backgroundColor: "rgba(248, 252, 250, 0.98)",
     paddingBottom: 8,
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    minHeight: SHEET_HEADER_HEIGHT,
+    justifyContent: "center",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    shadowColor: "#102421",
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 3,
+  },
+  sheetHeaderSpacer: {
+    height: SHEET_HEADER_HEIGHT,
+  },
+  grabberWrap: {
+    alignItems: "center",
+    justifyContent: "center",
   },
   grabber: {
     alignSelf: "center",
@@ -550,12 +827,18 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: 999,
     backgroundColor: "#c9d7d2",
-    marginBottom: 12,
+  },
+  sheetStateLabel: {
+    color: "#5f766e",
+    fontSize: 13,
+    fontWeight: "700",
+    marginTop: 8,
   },
   panelTitle: {
     color: "#11201c",
     fontSize: 24,
     fontWeight: "800",
+    marginTop: 8,
   },
   panelSubtitle: {
     color: "#5a746b",
