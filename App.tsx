@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
   Animated,
+  Modal,
   PanResponder,
   Pressable,
   ScrollView,
@@ -16,6 +16,11 @@ import MapView, { Marker, Polyline, type LatLng, type Region } from "react-nativ
 import LoginScreen from "./components/LoginScreen";
 import ProfileScreen from "./components/ProfileScreen";
 import RegisterScreen from "./components/RegisterScreen";
+import { getMe, listSessions, login, logout, logoutAll, refreshTokens, register } from "./lib/api/auth";
+import { clearStoredTokens, getStoredAccessToken, setAuthFailureHandler } from "./lib/api/client";
+import { getProfile, updateProfile } from "./lib/api/profile";
+import { getHealth } from "./lib/api/system";
+import type { SessionResponse, UserResponse } from "./lib/api/types";
 
 type Audience = "heat" | "stroller" | "mobile";
 type RouteId = "safest" | "comfortable" | "fastest";
@@ -37,8 +42,16 @@ type Place = {
 };
 
 type UserProfile = {
+  id?: string;
   name: string;
+  full_name?: string;
   email: string;
+  role?: string;
+};
+
+type RouteInputDialog = {
+  title: string;
+  message: string;
 };
 
 const ALMATY_REGION: Region = {
@@ -235,17 +248,48 @@ function buildRoutes(start: LatLng, end: LatLng): RouteOption[] {
   ];
 }
 
+function createGuestProfile(): UserProfile {
+  return {
+    name: "Guest",
+    full_name: "Guest",
+    email: "guest@example.com",
+  };
+}
+
+function toUserProfile(user: UserResponse): UserProfile {
+  return {
+    id: user.id,
+    name: user.full_name,
+    full_name: user.full_name,
+    email: user.email,
+    role: user.role,
+  };
+}
+
+function readErrorMessage(error: unknown, fallback: string) {
+  if (error && typeof error === "object" && "message" in error && typeof (error as { message?: unknown }).message === "string") {
+    return (error as { message: string }).message;
+  }
+
+  return fallback;
+}
+
 export default function App() {
   const { height: windowHeight } = useWindowDimensions();
   const statusBarInset = StatusBar.currentHeight ?? 0;
   const mapRef = useRef<MapView | null>(null);
   const [currentScreen, setCurrentScreen] = useState<Screen>("map");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [systemNotice, setSystemNotice] = useState<string | null>(null);
   const [authRedirectScreen, setAuthRedirectScreen] = useState<Exclude<Screen, "login" | "register">>("profile");
   const [userProfile, setUserProfile] = useState<UserProfile>({
     name: "Гость",
     email: "guest@example.com",
   });
+  const [sessions, setSessions] = useState<SessionResponse[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const bottomPanelScrollRef = useRef<ScrollView | null>(null);
   const routeSummaryOpacity = useRef(new Animated.Value(0)).current;
   const routeSummaryTranslateY = useRef(new Animated.Value(-12)).current;
@@ -263,6 +307,7 @@ export default function App() {
   const [selectedRouteId, setSelectedRouteId] = useState<RouteId>(AUDIENCE_COPY.heat.recommended);
   const [sheetSnapLevel, setSheetSnapLevel] = useState<"collapsed" | "half" | "full">("half");
   const [sheetVisibleHeight, setSheetVisibleHeight] = useState(0);
+  const [routeInputDialog, setRouteInputDialog] = useState<RouteInputDialog | null>(null);
 
   const recommendedRouteId = AUDIENCE_COPY[audience].recommended;
   const activeRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0];
@@ -301,6 +346,132 @@ export default function App() {
   useEffect(() => {
     setSelectedRouteId(recommendedRouteId);
   }, [recommendedRouteId]);
+
+  useEffect(() => {
+    setAuthFailureHandler(() => {
+      setIsAuthenticated(false);
+      setUserProfile(createGuestProfile());
+      setSessions([]);
+      setProfileError(null);
+      setCurrentScreen("map");
+    });
+
+    return () => {
+      setAuthFailureHandler(null);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function bootstrap() {
+      try {
+        await getHealth();
+        if (isMounted) {
+          setSystemNotice(null);
+        }
+      } catch {
+        if (isMounted) {
+          setSystemNotice("Backend unavailable. Local route preview still works, but auth and profile actions may fail.");
+        }
+      }
+
+      const accessToken = await getStoredAccessToken();
+
+      if (!accessToken) {
+        if (isMounted) {
+          setIsBootstrapping(false);
+        }
+        return;
+      }
+
+      try {
+        const me = await getMe();
+
+        if (isMounted) {
+          setUserProfile(toUserProfile(me));
+          setIsAuthenticated(true);
+        }
+      } catch (error) {
+        const status = error && typeof error === "object" && "status" in error ? (error as { status?: number }).status : undefined;
+
+        if (status === 0) {
+          if (isMounted) {
+            setIsBootstrapping(false);
+          }
+          return;
+        }
+
+        try {
+          const refreshed = await refreshTokens();
+
+          if (isMounted) {
+            setUserProfile(toUserProfile(refreshed.user));
+            setIsAuthenticated(true);
+          }
+        } catch (refreshError) {
+          const refreshStatus =
+            refreshError && typeof refreshError === "object" && "status" in refreshError
+              ? (refreshError as { status?: number }).status
+              : undefined;
+
+          if (refreshStatus !== 0) {
+            await clearStoredTokens();
+          }
+        }
+      } finally {
+        if (isMounted) {
+          setIsBootstrapping(false);
+        }
+      }
+    }
+
+    void bootstrap();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (currentScreen !== "profile" || !isAuthenticated) {
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadProfileScreenData() {
+      setIsLoadingSessions(true);
+      setProfileError(null);
+
+      const [profileResult, sessionsResult] = await Promise.allSettled([getProfile(), listSessions()]);
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (profileResult.status === "fulfilled") {
+        setUserProfile(toUserProfile(profileResult.value));
+      } else if (readErrorMessage(profileResult.reason, "").length > 0) {
+        setProfileError(readErrorMessage(profileResult.reason, "Unable to load your profile."));
+      }
+
+      if (sessionsResult.status === "fulfilled") {
+        setSessions(sessionsResult.value.items);
+      } else {
+        setSessions([]);
+        setProfileError((currentError) => currentError ?? readErrorMessage(sessionsResult.reason, "Unable to load sessions."));
+      }
+
+      setIsLoadingSessions(false);
+    }
+
+    void loadProfileScreenData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentScreen, isAuthenticated]);
 
   useEffect(() => {
     bottomPanelTranslateY.setValue(snapOffsets.half);
@@ -453,6 +624,10 @@ export default function App() {
   }
 
   function openProfileEntry() {
+    if (isBootstrapping) {
+      return;
+    }
+
     if (isAuthenticated) {
       setCurrentScreen("profile");
       return;
@@ -494,20 +669,78 @@ export default function App() {
     setCurrentScreen("map");
   }
 
+  async function handleLoginRequest({ email, password }: { email: string; password: string }) {
+    const payload = await login(email.trim(), password);
+
+    setUserProfile(toUserProfile(payload.user));
+    setIsAuthenticated(true);
+    setProfileError(null);
+    setSessions([]);
+    setCurrentScreen(authRedirectScreen);
+  }
+
+  async function handleRegisterRequest({
+    full_name,
+    email,
+    password,
+  }: {
+    full_name: string;
+    email: string;
+    password: string;
+  }) {
+    await register(full_name.trim(), email.trim(), password);
+
+    const payload = await login(email.trim(), password);
+
+    setUserProfile(toUserProfile(payload.user));
+    setIsAuthenticated(true);
+    setProfileError(null);
+    setSessions([]);
+    setCurrentScreen(authRedirectScreen);
+  }
+
+  async function handleLogoutRequest() {
+    await logout();
+    setIsAuthenticated(false);
+    setUserProfile(createGuestProfile());
+    setSessions([]);
+    setProfileError(null);
+    setCurrentScreen("map");
+  }
+
+  async function handleLogoutAllRequest() {
+    await logoutAll();
+    setIsAuthenticated(false);
+    setUserProfile(createGuestProfile());
+    setSessions([]);
+    setProfileError(null);
+    setCurrentScreen("map");
+  }
+
+  async function handleProfileSave(full_name: string) {
+    const nextProfile = await updateProfile(full_name.trim());
+
+    setUserProfile(toUserProfile(nextProfile));
+  }
+
   function submitRouteSearch() {
     const resolvedStart = resolvePlace(from);
     const resolvedEnd = resolvePlace(to);
 
     if (!resolvedStart || !resolvedEnd) {
-      Alert.alert(
-        "Неизвестное место",
-        "Используйте одну из предложенных точек Алматы или введите более близкое совпадение, например Парк Панфиловцев, Мега Алма-Ата или Площадь Абая."
-      );
+      setRouteInputDialog({
+        title: "Неизвестное место",
+        message:
+          "Используйте одну из предложенных точек Алматы или введите более близкое совпадение, например Парк Панфиловцев, Мега Алма-Ата или Площадь Абая.",
+      });
       return;
     }
 
     if (resolvedStart.name === resolvedEnd.name) {
-      Alert.alert("Выберите две разные точки", "Точка отправления и пункт назначения не могут совпадать.");
+      setRouteInputDialog({
+        title: "Выберите две разные точки",
+        message: "Точка отправления и пункт назначения не могут совпадать.",
+      });
       return;
     }
 
@@ -522,7 +755,7 @@ export default function App() {
   if (currentScreen === 'login') {
     return (
       <LoginScreen
-        onLogin={handleLogin}
+        onLogin={handleLoginRequest}
         onNavigateToRegister={() => setCurrentScreen('register')}
       />
     );
@@ -531,7 +764,7 @@ export default function App() {
   if (currentScreen === 'register') {
     return (
       <RegisterScreen
-        onRegister={handleRegister}
+        onRegister={handleRegisterRequest}
         onNavigateToLogin={() => setCurrentScreen('login')}
       />
     );
@@ -540,10 +773,15 @@ export default function App() {
   if (currentScreen === "profile") {
     return (
       <ProfileScreen
-        name={userProfile.name}
+        full_name={userProfile.full_name ?? userProfile.name}
         email={userProfile.email}
+        sessions={sessions}
+        isLoadingSessions={isLoadingSessions}
+        profileError={profileError}
+        onSaveProfile={handleProfileSave}
         onBack={() => setCurrentScreen("map")}
-        onLogout={handleLogout}
+        onLogout={handleLogoutRequest}
+        onLogoutAll={handleLogoutAllRequest}
       />
     );
   }
@@ -591,7 +829,7 @@ export default function App() {
         <Pressable style={styles.avatarButton} onPress={openProfileEntry}>
           <View style={styles.avatarCircle}>
             <Text style={styles.avatarText}>
-              {isAuthenticated ? userProfile.name.trim().charAt(0).toUpperCase() || "U" : "?"}
+              {isBootstrapping ? "..." : isAuthenticated ? (userProfile.full_name ?? userProfile.name).trim().charAt(0).toUpperCase() || "U" : "?"}
             </Text>
           </View>
         </Pressable>
@@ -612,6 +850,12 @@ export default function App() {
           </Animated.View>
         ) : null}
       </View>
+
+      {systemNotice ? (
+        <View style={[styles.systemNoticeBanner, { top: statusBarInset + 72 }]}>
+          <Text style={styles.systemNoticeText}>{systemNotice}</Text>
+        </View>
+      ) : null}
 
       <Animated.View
         pointerEvents={sheetSnapLevel === "collapsed" ? "none" : "auto"}
@@ -826,6 +1070,23 @@ export default function App() {
           ) : null}
         </ScrollView>
       </Animated.View>
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={routeInputDialog !== null}
+        onRequestClose={() => setRouteInputDialog(null)}
+      >
+        <View style={styles.dialogBackdrop}>
+          <View style={styles.dialogCard}>
+            <Text style={styles.dialogTitle}>{routeInputDialog?.title}</Text>
+            <Text style={styles.dialogMessage}>{routeInputDialog?.message}</Text>
+            <Pressable style={styles.dialogButton} onPress={() => setRouteInputDialog(null)}>
+              <Text style={styles.dialogButtonText}>OK</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -868,6 +1129,24 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "800",
   },
+  systemNoticeBanner: {
+    position: "absolute",
+    left: 18,
+    right: 18,
+    zIndex: 6,
+    borderRadius: 18,
+    backgroundColor: "rgba(255, 243, 242, 0.96)",
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  systemNoticeText: {
+    color: "#8a1c12",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "600",
+  },
   routeSummaryBanner: {
     backgroundColor: "rgba(255, 255, 255, 0.94)",
     borderRadius: 22,
@@ -884,6 +1163,52 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "800",
     textAlign: "center",
+  },
+  dialogBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(8, 21, 18, 0.42)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  dialogCard: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 24,
+    backgroundColor: "rgba(248, 252, 250, 0.98)",
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    shadowColor: "#0e241f",
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
+  },
+  dialogTitle: {
+    color: "#11201c",
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  dialogMessage: {
+    marginTop: 10,
+    color: "#37524b",
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  dialogButton: {
+    alignSelf: "flex-end",
+    marginTop: 18,
+    minWidth: 88,
+    borderRadius: 999,
+    backgroundColor: "#163f35",
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  dialogButtonText: {
+    color: "#f5fbf8",
+    fontSize: 14,
+    fontWeight: "700",
   },
   sheetBackdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -1141,3 +1466,4 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 });
+
