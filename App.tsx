@@ -576,48 +576,30 @@ export default function App() {
   const bottomPanelPanResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => sheetSnapLevelRef.current !== "full",
-        onStartShouldSetPanResponderCapture: () => sheetSnapLevelRef.current !== "full", 
+        // Allow children (buttons, inputs) to receive taps first
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
 
         onMoveShouldSetPanResponder: (_, gestureState) => {
-          const { dy, dx } = gestureState;
-          const isVertical = Math.abs(dy) > Math.abs(dx) * 1.2;
-
-          if (!isVertical) return false;
-
-          // Same logic as capture
+          // Claim the gesture if it's a significant vertical move
           if (sheetSnapLevelRef.current !== "full") {
-            return dy < -2 || dy > 2;
+            return Math.abs(gestureState.dy) > 4;
           }
-
-          // If full, only claim if dragging down from the top of scroll
-          const scrollIsAtTop = scrollDragLastOffsetY.current <= 10;
-          return scrollIsAtTop && dy > 2;
+          // If full, only claim downward drags if scroll is at top
+          const scrollIsAtTop = scrollDragLastOffsetY.current <= 0;
+          const isDraggingDown = gestureState.dy > 6;
+          return scrollIsAtTop && isDraggingDown;
         },
 
         onMoveShouldSetPanResponderCapture: (_, gestureState) => {
-          const { dy, dx } = gestureState;
-          const isVertical = Math.abs(dy) > Math.abs(dx) * 1.2;
-
-          if (!isVertical) return false;
-
-          // When the sheet is NOT full, always capture upward drags
-          // so the user can easily pull it up.
-          // Also capture downward drags if it's a clear vertical swipe.
           if (sheetSnapLevelRef.current !== "full") {
-            // dy < -2 means dragging UP
-            // dy > 2 means dragging DOWN
-            return dy < -2 || dy > 2;
+            // Capture vertical move to prevent ScrollView from scrolling
+            return Math.abs(gestureState.dy) > 4 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.1;
           }
-
-          // At full height, explicitly steal downward drags
-          // Ensure we don't accidentally capture slight taps
-          if (dy > 2) {
-             const scrollIsAtTop = scrollDragLastOffsetY.current <= 10;
-             return scrollIsAtTop;
-          }
-          
-          return false;
+          // Capture downward move at top of scroll
+          const scrollIsAtTop = scrollDragLastOffsetY.current <= 0;
+          const isDraggingDown = gestureState.dy > 6;
+          return scrollIsAtTop && isDraggingDown;
         },
 
         onPanResponderGrant: () => {
@@ -937,35 +919,23 @@ export default function App() {
       </Animated.View>
 
       <Animated.View
+        {...bottomPanelPanResponder.panHandlers}
         style={[
           styles.bottomPanel,
           { height: bottomSheetFullHeight, transform: [{ translateY: bottomPanelTranslateY }] },
         ]}
       >
-        <Animated.View
-          {...bottomPanelPanResponder.panHandlers}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="box-none"
-        >
-          <View style={styles.sheetHeader}>
-            <View style={styles.grabber} />
-          </View>
-        </Animated.View>
+        <View style={styles.sheetHeader}>
+          <View style={styles.grabber} />
+        </View>
 
         <ScrollView
           ref={bottomPanelScrollRef}
-          {...bottomPanelPanResponder.panHandlers}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.bottomPanelContent}
-          // Only allow the ScrollView to handle touch events when it's fully open.
           scrollEnabled={sheetSnapLevel === "full"}
-          bounces={false}
-          overScrollMode="never"
           scrollEventThrottle={16}
           onScroll={(e) => {
-            scrollDragLastOffsetY.current = e.nativeEvent.contentOffset.y;
-          }}
-          onScrollBeginDrag={(e) => {
             scrollDragLastOffsetY.current = e.nativeEvent.contentOffset.y;
           }}
         >
