@@ -537,6 +537,10 @@ export default function App() {
     const nextSnapLevel =
       nextTarget === snapOffsets.full ? "full" : nextTarget === snapOffsets.half ? "half" : "collapsed";
 
+    // Update ref immediately so PanResponder knows the intended state during animation
+    sheetSnapLevelRef.current = nextSnapLevel;
+    setSheetSnapLevel(nextSnapLevel);
+
     Animated.spring(bottomPanelTranslateY, {
       toValue: nextTarget,
       velocity,
@@ -545,8 +549,6 @@ export default function App() {
       useNativeDriver: true,
     }).start(() => {
       sheetOffsetRef.current = nextTarget;
-      sheetSnapLevelRef.current = nextSnapLevel;
-      setSheetSnapLevel(nextSnapLevel);
       if (nextSnapLevel !== "full") {
         bottomPanelScrollRef.current?.scrollTo({ y: 0, animated: false });
       }
@@ -588,9 +590,13 @@ export default function App() {
 
         onMoveShouldSetPanResponderCapture: (_, gestureState) => {
           if (sheetSnapLevelRef.current !== "full") {
+            // When not full, capture any significant vertical gesture to prevent ScrollView from taking it
             return Math.abs(gestureState.dy) > 4 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.1;
           }
-          return false;
+          // When full, capture downward gestures if we are at the top of the scroll area
+          const scrollIsAtTop = scrollDragLastOffsetY.current <= 0;
+          const isDraggingDown = gestureState.dy > 6;
+          return scrollIsAtTop && isDraggingDown;
         },
 
         onPanResponderGrant: () => {
@@ -776,6 +782,7 @@ export default function App() {
     setHasBuiltRoutes(true);
     setJourneyStarted(false);
     setSelectedRouteId(AUDIENCE_COPY[audience].recommended);
+    animateSheetTo(snapOffsets.half);
   }
 
   if (currentScreen === 'login') {
@@ -1235,6 +1242,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+    zIndex: 10,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     backgroundColor: "#f7faf8",
