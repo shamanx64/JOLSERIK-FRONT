@@ -576,13 +576,16 @@ export default function App() {
   const bottomPanelPanResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => sheetSnapLevelRef.current !== "full",
-        onStartShouldSetPanResponderCapture: () => sheetSnapLevelRef.current !== "full",
+        // Allow children (buttons, inputs) to receive taps first
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
 
         onMoveShouldSetPanResponder: (_, gestureState) => {
+          // Claim the gesture if it's a significant vertical move
           if (sheetSnapLevelRef.current !== "full") {
             return Math.abs(gestureState.dy) > 4;
           }
+          // If full, only claim downward drags if scroll is at top
           const scrollIsAtTop = scrollDragLastOffsetY.current <= 0;
           const isDraggingDown = gestureState.dy > 6;
           return scrollIsAtTop && isDraggingDown;
@@ -590,10 +593,10 @@ export default function App() {
 
         onMoveShouldSetPanResponderCapture: (_, gestureState) => {
           if (sheetSnapLevelRef.current !== "full") {
-            // When not full, capture any significant vertical gesture to prevent ScrollView from taking it
+            // Capture vertical move to prevent ScrollView from scrolling
             return Math.abs(gestureState.dy) > 4 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.1;
           }
-          // When full, capture downward gestures if we are at the top of the scroll area
+          // Capture downward move at top of scroll
           const scrollIsAtTop = scrollDragLastOffsetY.current <= 0;
           const isDraggingDown = gestureState.dy > 6;
           return scrollIsAtTop && isDraggingDown;
@@ -960,7 +963,9 @@ export default function App() {
                     onPress={() => {
                       setSelectedRouteId(route.id);
                       setJourneyStarted(false);
-                      animateSheetTo(snapOffsets.half);
+                      if (sheetSnapLevelRef.current !== "half") {
+                        animateSheetTo(snapOffsets.half);
+                      }
                     }}
                   >
                     <View style={styles.routeHeader}>
